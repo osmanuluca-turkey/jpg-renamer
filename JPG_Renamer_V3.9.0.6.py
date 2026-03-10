@@ -1,0 +1,460 @@
+from tkinter import *
+from tkinter import filedialog, messagebox, Menu
+import os
+import re
+import shutil
+import subprocess
+import threading
+import sys
+from PIL import ImageTk, Image
+
+try:
+    import pytesseract
+    OCR_MEVCUT = True
+except ImportError:
+    OCR_MEVCUT = False
+
+try:
+    import windnd
+    DND_MEVCUT = True
+except ImportError:
+    DND_MEVCUT = False
+
+RESIM_UZANTILARI = ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp')
+
+sayi = 0
+lstm = ()
+yol = ""
+im = None
+liste = []
+orijinal = []
+say = 0
+Gr = None
+kontroller_var = False
+sayac_label = None
+kayit_kilit = threading.Lock()
+
+
+def resim_mi(dosya_adi):
+    return dosya_adi.lower().endswith(RESIM_UZANTILARI)
+
+
+def dosya_adi_temizle(metin):
+    metin = re.sub(r'[<>:"/\\|?*\n\r\t]', ' ', metin)
+    metin = re.sub(r'\s+', '_', metin.strip()).strip('_.')
+    return metin[:80]
+
+
+def resim_goster_bellekten(pil_img):
+    panel.update_idletasks()
+    pw = max(panel.winfo_width(), 400)
+    ph = max(panel.winfo_height(), 300)
+    x, y = pil_img.size
+    oran = min(pw / x, ph / y)
+    if oran < 1:
+        kucuk = pil_img.resize((int(x * oran), int(y * oran)), Image.LANCZOS)
+    else:
+        kucuk = pil_img.copy()
+    imge = ImageTk.PhotoImage(kucuk)
+    panel.configure(image=imge, text="")
+    panel.image = imge
+
+
+def resim_goster(dosya_yolu):
+    global im
+    try:
+        im = Image.open(dosya_yolu)
+        im.load()
+        resim_goster_bellekten(im)
+    except Exception as e:
+        panel.configure(image='', text=f"Acilamadi:\n{e}")
+        panel.image = None
+        im = None
+
+
+def durum_guncelle(mesaj):
+    durum_label.config(text=mesaj)
+    pencere.update_idletasks()
+
+
+def benzersiz_yap(ad, index):
+    global liste
+    isim, uzanti = os.path.splitext(ad)
+    if not uzanti:
+        uzanti = '.JPG'
+        ad = isim + uzanti
+    diger = [liste[i].lower() for i in range(len(liste)) if i != index]
+    if ad.lower() not in diger:
+        return ad
+    s = 2
+    while f"{isim}_{s}{uzanti}".lower() in diger:
+        s += 1
+    return f"{isim}_{s}{uzanti}"
+
+
+def tum_listeyi_benzersiz_yap():
+    global liste
+    for i in range(len(liste)):
+        isim, uzanti = os.path.splitext(liste[i])
+        if not uzanti:
+            uzanti = '.JPG'
+            liste[i] = isim + uzanti
+        oncekiler = [liste[j].lower() for j in range(i)]
+        if liste[i].lower() in oncekiler:
+            s = 2
+            while f"{isim}_{s}{uzanti}".lower() in oncekiler:
+                s += 1
+            liste[i] = f"{isim}_{s}{uzanti}"
+
+
+def klasoru_yeniden_yukle():
+    global lstm, liste, orijinal, say, sayi
+    tum = sorted(os.listdir(yol))
+    resimler = [f for f in tum if resim_mi(f)]
+    lstm = tuple(os.path.join(yol, f) for f in resimler)
+    liste = list(resimler)
+    orijinal = list(resimler)
+    say = len(lstm)
+    if sayi >= say:
+        sayi = max(0, say - 1)
+    sayac_guncelle()
+
+
+def kontrolleri_olustur():
+    global Gr, kontroller_var, sayac_label
+    if kontroller_var:
+        return
+    kontroller_var = True
+    Gr = Entry(pencere, font="Arial 12 bold")
+    Gr.place(x=350, y=10, width=350, height=35)
+    Gr.bind('<Return>', lambda e: ad_kontrol_et())
+    Gr.bind('<FocusOut>', lambda e: ad_kontrol_et())
+    Button(pencere, text="<", font="Arial 13 bold",
+           command=geri).place(x=305, y=10, width=40, height=35)
+    Button(pencere, text=">", font="Arial 13 bold",
+           command=ileri).place(x=705, y=10, width=40, height=35)
+    Button(pencere, text="R", font="Arial 13 bold",
+           command=cevir, bg="#FF9800", fg="white"
+           ).place(x=755, y=10, width=40, height=35)
+    if OCR_MEVCUT:
+        Button(pencere, text="OCR", font="Arial 10 bold",
+               command=ocr_oner, bg="#4CAF50", fg="white"
+               ).place(x=805, y=10, width=55, height=35)
+    sayac_label = Label(pencere, font="Arial 11 bold", bg="#2b2b2b", fg="#aaa")
+    sayac_label.place(x=870, y=10, width=80, height=35)
+
+
+def sayac_guncelle():
+    if kontroller_var and sayac_label is not None:
+        sayac_label.config(text=f"{sayi + 1} / {say}")
+
+
+def ad_kontrol_et():
+    global liste, sayi, Gr
+    if Gr is None or not liste:
+        return
+    ad = Gr.get().strip()
+    if not ad:
+        return
+    yeni = benzersiz_yap(ad, sayi)
+    if yeni != ad:
+        Gr.delete(0, "end")
+        Gr.insert(0, yeni)
+        durum_guncelle(f"Ayni isim -> {yeni}")
+    liste[sayi] = yeni
+
+
+def dosya_ac(fil):
+    global sayi, lstm, yol, im, liste, orijinal, say
+    fil = fil.strip().strip('"').strip("'")
+    if fil.startswith('{') and fil.endswith('}'):
+        fil = fil[1:-1]
+    if not fil or not os.path.exists(fil):
+        return
+    if os.path.isdir(fil):
+        for f in sorted(os.listdir(fil)):
+            if resim_mi(f):
+                fil = os.path.join(fil, f)
+                break
+        else:
+            messagebox.showwarning("UYARI", "Klasorde resim yok!")
+            return
+    if not os.path.isfile(fil):
+        return
+    dosya_adi = os.path.basename(fil)
+    if not resim_mi(dosya_adi):
+        messagebox.showwarning("UYARI", f"Desteklenmeyen dosya:\n{dosya_adi}")
+        return
+    yol = os.path.dirname(os.path.abspath(fil))
+    tum = sorted(os.listdir(yol))
+    resimler = [f for f in tum if resim_mi(f)]
+    lstm = tuple(os.path.join(yol, f) for f in resimler)
+    liste = list(resimler)
+    orijinal = list(resimler)
+    say = len(lstm)
+    if say == 0:
+        messagebox.showwarning("UYARI", "Klasorde resim yok!")
+        return
+    kontrolleri_olustur()
+    try:
+        sayi = resimler.index(dosya_adi)
+    except ValueError:
+        sayi = 0
+    resim_goster(lstm[sayi])
+    Gr.delete(0, "end")
+    Gr.insert(0, liste[sayi])
+    sayac_guncelle()
+    durum_guncelle(f"Klasor: {yol}  |  {say} resim")
+
+
+def ac():
+    fil = filedialog.askopenfilename(
+        title='Resim Sec',
+        filetypes=[("Resim", "*.jpg *.jpeg *.png *.bmp *.gif *.tiff *.webp"),
+                    ("Tumu", "*.*")]
+    )
+    if fil:
+        dosya_ac(fil)
+
+
+def drop_fonk(dosyalar):
+    if not dosyalar:
+        return
+    dosya = dosyalar[0]
+    if isinstance(dosya, bytes):
+        dosya = dosya.decode('utf-8', errors='replace')
+    dosya = str(dosya).strip()
+    pencere.after(50, lambda: dosya_ac(dosya))
+
+
+def cevir():
+    global im
+    if im is None:
+        return
+    dosya_yolu = lstm[sayi]
+    if kayit_kilit.locked():
+        durum_guncelle("Onceki kayit bekleniyor...")
+        pencere.after(200, cevir)
+        return
+    im = im.transpose(Image.ROTATE_270)
+    resim_goster_bellekten(im)
+    durum_guncelle("Donduruluyor...")
+    kaydet_img = im.copy()
+    uzanti = os.path.splitext(dosya_yolu)[1].lower()
+
+    def arka_plan_kaydet():
+        with kayit_kilit:
+            try:
+                if uzanti in ('.jpg', '.jpeg'):
+                    jpegtran = shutil.which('jpegtran')
+                    if jpegtran:
+                        temp = dosya_yolu + '.tmp'
+                        subprocess.run(
+                            [jpegtran, '-rotate', '90',
+                             '-outfile', temp, dosya_yolu],
+                            check=True, capture_output=True
+                        )
+                        os.replace(temp, dosya_yolu)
+                    else:
+                        kaydet_img.save(dosya_yolu, 'JPEG',
+                                        quality=95, subsampling=0)
+                else:
+                    kaydet_img.save(dosya_yolu)
+                pencere.after(0, lambda: durum_guncelle("Kaydedildi"))
+            except Exception as e:
+                pencere.after(0, lambda: durum_guncelle(f"Kayit hatasi: {e}"))
+
+    threading.Thread(target=arka_plan_kaydet, daemon=True).start()
+
+
+def ocr_oner():
+    global im, Gr, sayi, liste
+    if not OCR_MEVCUT or im is None:
+        messagebox.showerror("HATA", "OCR kullanilabilir degil")
+        return
+    durum_guncelle("OCR okunuyor...")
+    pencere.update()
+    try:
+        metin = ""
+        for lang in ['tur+eng', 'tur', 'eng', None]:
+            try:
+                metin = (pytesseract.image_to_string(im, lang=lang)
+                         if lang else pytesseract.image_to_string(im))
+                if metin.strip():
+                    break
+            except Exception:
+                continue
+        if metin.strip():
+            temiz = dosya_adi_temizle(metin)
+            if temiz:
+                _, uzanti = os.path.splitext(Gr.get())
+                if not uzanti:
+                    uzanti = '.JPG'
+                yeni = benzersiz_yap(temiz + uzanti, sayi)
+                if messagebox.askyesno("OCR Sonucu",
+                        f"Okunan:\n{metin.strip()[:300]}\n\n"
+                        f"Onerilen ad:\n  {yeni}\n\nKullanilsin mi?"):
+                    Gr.delete(0, "end")
+                    Gr.insert(0, yeni)
+                    liste[sayi] = yeni
+                    durum_guncelle(f"OCR -> {yeni}")
+                    return
+        messagebox.showwarning("UYARI", "Yazi bulunamadi!")
+        durum_guncelle("OCR: yazi yok")
+    except Exception as e:
+        messagebox.showerror("HATA", str(e))
+
+
+def ileri(event=None):
+    global sayi
+    if not lstm or Gr is None:
+        return
+    if event and pencere.focus_get() == Gr:
+        return
+    ad = Gr.get().strip()
+    if ad:
+        yeni = benzersiz_yap(ad, sayi)
+        liste[sayi] = yeni
+        if yeni != ad:
+            durum_guncelle(f"Ayni isim -> {yeni}")
+    if sayi >= say - 1:
+        messagebox.showinfo("BILGI", "Son resim!")
+        return
+    sayi += 1
+    resim_goster(lstm[sayi])
+    Gr.delete(0, "end")
+    Gr.insert(0, liste[sayi])
+    sayac_guncelle()
+    durum_guncelle(f"Klasor: {yol}  |  {liste[sayi]}")
+
+
+def geri(event=None):
+    global sayi
+    if not lstm or Gr is None:
+        return
+    if event and pencere.focus_get() == Gr:
+        return
+    ad = Gr.get().strip()
+    if ad:
+        yeni = benzersiz_yap(ad, sayi)
+        liste[sayi] = yeni
+        if yeni != ad:
+            durum_guncelle(f"Ayni isim -> {yeni}")
+    if sayi <= 0:
+        messagebox.showinfo("BILGI", "Ilk resim!")
+        return
+    sayi -= 1
+    resim_goster(lstm[sayi])
+    Gr.delete(0, "end")
+    Gr.insert(0, liste[sayi])
+    sayac_guncelle()
+    durum_guncelle(f"Klasor: {yol}  |  {liste[sayi]}")
+
+
+def Calistir():
+    global lstm, liste, yol, Gr, sayi
+    if Gr is not None and liste:
+        liste[sayi] = Gr.get().strip()
+    if not lstm:
+        messagebox.showwarning("UYARI", "Once klasor acin!")
+        return
+    tum_listeyi_benzersiz_yap()
+    degisen = []
+    for i in range(len(orijinal)):
+        if orijinal[i] != liste[i]:
+            degisen.append(f"  {orijinal[i]}  ->  {liste[i]}")
+    if not degisen:
+        messagebox.showinfo("BILGI", "Degisiklik yok!")
+        return
+    onay = f"{len(degisen)} dosya yeniden adlandirilacak:\n\n"
+    onay += "\n".join(degisen[:25])
+    if len(degisen) > 25:
+        onay += f"\n  ... +{len(degisen) - 25} dosya daha"
+    if not messagebox.askyesno("ONAY", onay):
+        return
+    try:
+        durum_guncelle("Adlandiriliyor...")
+        temp = []
+        for s in range(len(lstm)):
+            t = os.path.join(yol, f"__tmp_{s:06d}__")
+            os.rename(lstm[s], t)
+            temp.append(t)
+        hatalar = []
+        for s, t in enumerate(temp):
+            try:
+                os.rename(t, os.path.join(yol, liste[s]))
+            except Exception as e:
+                hatalar.append(f"{liste[s]}: {e}")
+        if hatalar:
+            messagebox.showwarning("UYARI",
+                f"{len(hatalar)} dosyada hata:\n" + "\n".join(hatalar[:10]))
+        klasoru_yeniden_yukle()
+        if say > 0:
+            resim_goster(lstm[sayi])
+            Gr.delete(0, "end")
+            Gr.insert(0, liste[sayi])
+        messagebox.showinfo("SONUC", f"{len(degisen)} dosya adlandirildi!")
+        durum_guncelle("Tamamlandi!")
+    except Exception as e:
+        messagebox.showerror("HATA", str(e))
+        durum_guncelle(f"Hata: {e}")
+
+
+pencere = Tk()
+pencere.geometry("1200x700")
+pencere.minsize(800, 500)
+pencere.title("JPG Renamer V1.3")
+pencere.configure(bg="#2b2b2b")
+
+panel = Label(pencere, bg="#1e1e1e",
+              text="Resim surukleyip birakin\nveya Dosya > Ac",
+              font="Arial 16", fg="#666", compound="center")
+panel.place(x=150, y=60, width=900, height=580)
+panel.image = None
+
+
+def pencere_boyut_degisti(event):
+    if event.widget == pencere:
+        w, h = event.width, event.height
+        panel.place(x=20, y=60, width=w - 40, height=h - 120)
+        if im is not None:
+            pencere.after(100, lambda: resim_goster_bellekten(im))
+
+
+pencere.bind('<Configure>', pencere_boyut_degisti)
+pencere.bind('<Left>', geri)
+pencere.bind('<Right>', ileri)
+pencere.bind('<Control-o>', lambda e: ac())
+pencere.bind('<Control-r>', lambda e: cevir())
+pencere.bind('<F5>', lambda e: Calistir())
+
+if DND_MEVCUT:
+    windnd.hook_dropfiles(pencere, func=drop_fonk)
+
+bilgi = []
+if DND_MEVCUT:
+    bilgi.append("Surukle-birak: AKTIF")
+else:
+    bilgi.append("Surukle-birak: YOK")
+if OCR_MEVCUT:
+    bilgi.append("OCR: AKTIF")
+bilgi.append("Kisayollar: Sol/Sag Ok | Ctrl+O | Ctrl+R | F5")
+
+durum_label = Label(pencere, text="  |  ".join(bilgi),
+                    bd=1, relief=SUNKEN, anchor=W,
+                    font="Arial 10", bg="#333", fg="#0f0")
+durum_label.pack(side=BOTTOM, fill=X)
+
+MenuCubugu = Menu(pencere)
+pencere.config(menu=MenuCubugu)
+dosya_menu = Menu(MenuCubugu, tearoff=False)
+dosya_menu.add_command(label='Ac          Ctrl+O', command=ac)
+dosya_menu.add_command(label='Calistir    F5', command=Calistir)
+dosya_menu.add_separator()
+dosya_menu.add_command(label='Cikis', command=pencere.destroy)
+MenuCubugu.add_cascade(label="Dosya", menu=dosya_menu)
+
+if len(sys.argv) > 1:
+    pencere.after(100, lambda: dosya_ac(sys.argv[1]))
+
+pencere.mainloop()
