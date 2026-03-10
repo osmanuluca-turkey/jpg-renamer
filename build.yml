@@ -30,7 +30,7 @@ jobs:
 
       - name: Build EXE
         shell: cmd
-        run: pyinstaller --onefile --windowed --noconfirm --clean --name JPG_Renamer --collect-submodules PIL --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL._tkinter_finder --hidden-import windnd --hidden-import tkinter renamer.py
+        run: pyinstaller --onefile --windowed --noconfirm --clean --name JPG_Renamer --collect-submodules PIL --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL._tkinter_finder --hidden-import windnd --hidden-import tkinter JPG_Renamer_V3.9.0.6.py
 
       - name: Show output
         shell: cmd
@@ -39,6 +39,6 @@ jobs:
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: JPG_Renamer_Windows
-          path: dist/JPG_Renamer.exe
+          name: JPG_Renamer_V3.9.0.6_Windows
+          path: dist/JPG_Renamer_V3.9.0.6.exe
           if-no-files-found: error
