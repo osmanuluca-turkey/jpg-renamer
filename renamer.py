@@ -8,38 +8,72 @@ import threading
 import sys
 from PIL import ImageTk, Image
 
-# ── Tesseract yolunu bul ──
+# ═══════════════════════════════════════════════════
+#  TESSERACT ARAMA
+# ═══════════════════════════════════════════════════
+
 def tesseract_yolunu_bul():
     adaylar = []
+
+    # 1) EXE'nin yanindaki tesseract klasoru (PAKETLENMIS)
     if getattr(sys, 'frozen', False):
-        base = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-        adaylar.append(os.path.join(base, 'tesseract', 'tesseract.exe'))
+        exe_klasor = os.path.dirname(sys.executable)
+    else:
+        exe_klasor = os.path.dirname(os.path.abspath(__file__))
+
+    adaylar.append(os.path.join(exe_klasor, 'tesseract', 'tesseract.exe'))
+
+    # 2) PyInstaller _MEIPASS (onefile modunda)
+    if hasattr(sys, '_MEIPASS'):
+        adaylar.append(os.path.join(sys._MEIPASS, 'tesseract', 'tesseract.exe'))
+
+    # 3) Standart kurulum yollari
     adaylar.extend([
         r'C:\Program Files\Tesseract-OCR\tesseract.exe',
         r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+        os.path.expandvars(r'%LOCALAPPDATA%\Tesseract-OCR\tesseract.exe'),
+        os.path.expandvars(r'%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe'),
     ])
+
+    # 4) PATH'te var mi
     w = shutil.which('tesseract')
     if w:
         adaylar.append(w)
+
+    # 5) Registry
+    try:
+        import winreg
+        for root in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+            try:
+                key = winreg.OpenKey(root, r'SOFTWARE\Tesseract-OCR')
+                val, _ = winreg.QueryValueEx(key, 'InstallDir')
+                adaylar.append(os.path.join(val, 'tesseract.exe'))
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     for y in adaylar:
-        if os.path.isfile(y):
+        if y and os.path.isfile(y):
             return y
     return None
 
-# ── OCR ──
+
+# ── OCR kurulumu ──
+OCR_MEVCUT = False
 try:
     import pytesseract
     tess_yol = tesseract_yolunu_bul()
     if tess_yol:
         pytesseract.pytesseract.tesseract_cmd = tess_yol
-        tessdata = os.path.join(os.path.dirname(tess_yol), 'tessdata')
+        tess_klasor = os.path.dirname(tess_yol)
+        tessdata = os.path.join(tess_klasor, 'tessdata')
         if os.path.isdir(tessdata):
-            os.environ['TESSDATA_PREFIX'] = os.path.dirname(tess_yol)
+            os.environ['TESSDATA_PREFIX'] = tess_klasor
         OCR_MEVCUT = True
-    else:
-        OCR_MEVCUT = False
 except ImportError:
-    OCR_MEVCUT = False
+    pass
 
 # ── Surukle-Birak ──
 try:
@@ -73,12 +107,7 @@ def dosya_adi_temizle(metin):
     return metin[:80]
 
 
-# ═══════════════════════════════════════════════════
-#  UZANTI KONTROL
-# ═══════════════════════════════════════════════════
-
 def orijinal_uzanti_al(index):
-    """Orijinal dosyanin uzantisini dondurur"""
     if index < len(orijinal):
         _, uz = os.path.splitext(orijinal[index])
         return uz if uz else '.JPG'
@@ -86,47 +115,17 @@ def orijinal_uzanti_al(index):
 
 
 def uzanti_kontrol(ad, index):
-    """
-    Girilen ada uzanti kontrolu yapar:
-    - Uzanti yoksa orijinal uzantiyi ekler
-    - Gecersiz uzanti varsa uyari verir ve duzeltir
-    - Gecerli uzanti varsa dokunmaz
-    """
     isim, uzanti = os.path.splitext(ad)
-
-    # Isim bos kalmasin
     if not isim.strip():
         isim = "isimsiz"
-
-    # Uzanti yoksa → orijinal uzantiyi ekle
     if not uzanti:
         orijinal_uz = orijinal_uzanti_al(index)
-        ad = isim + orijinal_uz
-        durum_guncelle(f"Uzanti eklendi: {orijinal_uz}")
-        return ad
-
-    # Uzanti var ama resim uzantisi degil → uyar ve orijinali ekle
+        return isim + orijinal_uz
     if uzanti.lower() not in RESIM_UZANTILARI:
         orijinal_uz = orijinal_uzanti_al(index)
-        ad = isim + uzanti.rstrip('.') + orijinal_uz
-        durum_guncelle(f"Gecersiz uzanti duzeltildi -> {ad}")
-        return ad
-
+        return isim + uzanti.rstrip('.') + orijinal_uz
     return ad
 
-
-def uzanti_degisti_mi(ad, index):
-    """Uzanti orijinalden farkli mi kontrol eder"""
-    _, yeni_uz = os.path.splitext(ad)
-    orijinal_uz = orijinal_uzanti_al(index)
-    if yeni_uz.lower() != orijinal_uz.lower():
-        return True, orijinal_uz
-    return False, orijinal_uz
-
-
-# ═══════════════════════════════════════════════════
-#  GORUNTU
-# ═══════════════════════════════════════════════════
 
 def resim_goster_bellekten(pil_img):
     panel.update_idletasks()
@@ -160,16 +159,9 @@ def durum_guncelle(mesaj):
     pencere.update_idletasks()
 
 
-# ═══════════════════════════════════════════════════
-#  BENZERSIZ YAPMA
-# ═══════════════════════════════════════════════════
-
 def benzersiz_yap(ad, index):
     global liste
-
-    # Oncelikle uzanti kontrolu
     ad = uzanti_kontrol(ad, index)
-
     isim, uzanti = os.path.splitext(ad)
     diger = [liste[i].lower() for i in range(len(liste)) if i != index]
     if ad.lower() not in diger:
@@ -183,9 +175,7 @@ def benzersiz_yap(ad, index):
 def tum_listeyi_benzersiz_yap():
     global liste
     for i in range(len(liste)):
-        # Uzanti kontrolu
         liste[i] = uzanti_kontrol(liste[i], i)
-
         isim, uzanti = os.path.splitext(liste[i])
         oncekiler = [liste[j].lower() for j in range(i)]
         if liste[i].lower() in oncekiler:
@@ -208,10 +198,6 @@ def klasoru_yeniden_yukle():
     sayac_guncelle()
 
 
-# ═══════════════════════════════════════════════════
-#  KONTROL CUBUGU
-# ═══════════════════════════════════════════════════
-
 def kontrolleri_olustur():
     global Gr, kontroller_var, sayac_label
     if kontroller_var:
@@ -228,10 +214,9 @@ def kontrolleri_olustur():
     Button(pencere, text="R", font="Arial 13 bold",
            command=cevir, bg="#FF9800", fg="white"
            ).place(x=755, y=10, width=40, height=35)
-    if OCR_MEVCUT:
-        Button(pencere, text="OCR", font="Arial 10 bold",
-               command=ocr_oner, bg="#4CAF50", fg="white"
-               ).place(x=805, y=10, width=55, height=35)
+    Button(pencere, text="OCR", font="Arial 10 bold",
+           command=ocr_oner, bg="#4CAF50", fg="white"
+           ).place(x=805, y=10, width=55, height=35)
     sayac_label = Label(pencere, font="Arial 11 bold", bg="#2b2b2b", fg="#aaa")
     sayac_label.place(x=870, y=10, width=80, height=35)
 
@@ -242,50 +227,24 @@ def sayac_guncelle():
 
 
 def ad_kontrol_et():
-    """Entry'deki adi kontrol et: uzanti + benzersizlik"""
     global liste, sayi, Gr
     if Gr is None or not liste:
         return
-
     ad = Gr.get().strip()
     if not ad:
-        # Bos birakilirsa orijinal adi geri koy
         ad = orijinal[sayi]
         Gr.delete(0, "end")
         Gr.insert(0, ad)
-        durum_guncelle("Bos isim -> orijinal geri yuklendi")
         liste[sayi] = ad
         return
-
-    # Uzanti kontrolu
     ad = uzanti_kontrol(ad, sayi)
-
-    # Uzanti degismis mi kontrol et
-    degisti, orijinal_uz = uzanti_degisti_mi(ad, sayi)
-    if degisti:
-        _, yeni_uz = os.path.splitext(ad)
-        cevap = messagebox.askyesno("Uzanti Degisikligi",
-            f"Uzanti degisti: {orijinal_uz} -> {yeni_uz}\n\n"
-            f"Orijinal uzanti ({orijinal_uz}) kullanilsin mi?\n\n"
-            f"Evet = {orijinal_uz} kullan\n"
-            f"Hayir = {yeni_uz} kalsin")
-        if cevap:
-            isim, _ = os.path.splitext(ad)
-            ad = isim + orijinal_uz
-
-    # Benzersizlik kontrolu
     yeni = benzersiz_yap(ad, sayi)
     if yeni != ad:
         durum_guncelle(f"Ayni isim -> {yeni}")
-
     Gr.delete(0, "end")
     Gr.insert(0, yeni)
     liste[sayi] = yeni
 
-
-# ═══════════════════════════════════════════════════
-#  DOSYA ACMA
-# ═══════════════════════════════════════════════════
 
 def dosya_ac(fil):
     global sayi, lstm, yol, im, liste, orijinal, say
@@ -350,10 +309,6 @@ def drop_fonk(dosyalar):
     pencere.after(50, lambda: dosya_ac(dosya))
 
 
-# ═══════════════════════════════════════════════════
-#  DONDURME
-# ═══════════════════════════════════════════════════
-
 def cevir():
     global im
     if im is None:
@@ -394,14 +349,45 @@ def cevir():
     threading.Thread(target=arka_plan_kaydet, daemon=True).start()
 
 
-# ═══════════════════════════════════════════════════
-#  OCR
-# ═══════════════════════════════════════════════════
+def tesseract_kur_bilgi():
+    mesaj = (
+        "Tesseract OCR motoru bulunamadi!\n\n"
+        "OCR kullanmak icin Tesseract'i kurun:\n\n"
+        "1. github.com/UB-Mannheim/tesseract/wiki\n"
+        "2. tesseract-ocr-w64-setup indirin\n"
+        "3. Turkish dil paketini secin\n"
+        "4. Programi yeniden baslatin\n\n"
+        "Link panoya kopyalansin mi?"
+    )
+    if messagebox.askyesno("Tesseract Gerekli", mesaj):
+        try:
+            pencere.clipboard_clear()
+            pencere.clipboard_append("https://github.com/UB-Mannheim/tesseract/wiki")
+            durum_guncelle("Link panoya kopyalandi!")
+        except Exception:
+            pass
+
 
 def ocr_oner():
-    global im, Gr, sayi, liste
-    if not OCR_MEVCUT or im is None:
-        messagebox.showerror("HATA", "OCR motoru bulunamadi!\n\nTesseract OCR yuklu degil.")
+    global im, Gr, sayi, liste, OCR_MEVCUT
+    if im is None:
+        messagebox.showwarning("UYARI", "Once resim acin!")
+        return
+    if not OCR_MEVCUT:
+        try:
+            import pytesseract as pt
+            tess = tesseract_yolunu_bul()
+            if tess:
+                pt.pytesseract.tesseract_cmd = tess
+                tess_klasor = os.path.dirname(tess)
+                tessdata = os.path.join(tess_klasor, 'tessdata')
+                if os.path.isdir(tessdata):
+                    os.environ['TESSDATA_PREFIX'] = tess_klasor
+                OCR_MEVCUT = True
+        except ImportError:
+            pass
+    if not OCR_MEVCUT:
+        tesseract_kur_bilgi()
         return
     durum_guncelle("OCR okunuyor...")
     pencere.update()
@@ -418,7 +404,6 @@ def ocr_oner():
         if metin.strip():
             temiz = dosya_adi_temizle(metin)
             if temiz:
-                # Orijinal uzantiyi kullan
                 orijinal_uz = orijinal_uzanti_al(sayi)
                 yeni = benzersiz_yap(temiz + orijinal_uz, sayi)
                 if messagebox.askyesno("OCR Sonucu",
@@ -435,31 +420,22 @@ def ocr_oner():
         messagebox.showerror("HATA", str(e))
 
 
-# ═══════════════════════════════════════════════════
-#  ILERI / GERI
-# ═══════════════════════════════════════════════════
-
 def ileri(event=None):
     global sayi
     if not lstm or Gr is None:
         return
     if event and pencere.focus_get() == Gr:
         return
-
     ad = Gr.get().strip()
     if ad:
         ad = uzanti_kontrol(ad, sayi)
         yeni = benzersiz_yap(ad, sayi)
         liste[sayi] = yeni
-        if yeni != ad:
-            durum_guncelle(f"Ayni isim -> {yeni}")
     else:
         liste[sayi] = orijinal[sayi]
-
     if sayi >= say - 1:
         messagebox.showinfo("BILGI", "Son resim!")
         return
-
     sayi += 1
     resim_goster(lstm[sayi])
     Gr.delete(0, "end")
@@ -474,21 +450,16 @@ def geri(event=None):
         return
     if event and pencere.focus_get() == Gr:
         return
-
     ad = Gr.get().strip()
     if ad:
         ad = uzanti_kontrol(ad, sayi)
         yeni = benzersiz_yap(ad, sayi)
         liste[sayi] = yeni
-        if yeni != ad:
-            durum_guncelle(f"Ayni isim -> {yeni}")
     else:
         liste[sayi] = orijinal[sayi]
-
     if sayi <= 0:
         messagebox.showinfo("BILGI", "Ilk resim!")
         return
-
     sayi -= 1
     resim_goster(lstm[sayi])
     Gr.delete(0, "end")
@@ -497,48 +468,33 @@ def geri(event=None):
     durum_guncelle(f"Klasor: {yol}  |  {liste[sayi]}")
 
 
-# ═══════════════════════════════════════════════════
-#  CALISTIR
-# ═══════════════════════════════════════════════════
-
 def Calistir():
     global lstm, liste, yol, Gr, sayi
-
     if Gr is not None and liste:
         ad = Gr.get().strip()
         if ad:
-            ad = uzanti_kontrol(ad, sayi)
-            liste[sayi] = ad
+            liste[sayi] = uzanti_kontrol(ad, sayi)
         else:
             liste[sayi] = orijinal[sayi]
-
     if not lstm:
         messagebox.showwarning("UYARI", "Once klasor acin!")
         return
-
-    # Tum listeye uzanti kontrolu uygula
     for i in range(len(liste)):
         liste[i] = uzanti_kontrol(liste[i], i)
-
     tum_listeyi_benzersiz_yap()
-
     degisen = []
     for i in range(len(orijinal)):
         if orijinal[i] != liste[i]:
             degisen.append(f"  {orijinal[i]}  ->  {liste[i]}")
-
     if not degisen:
         messagebox.showinfo("BILGI", "Degisiklik yok!")
         return
-
     onay = f"{len(degisen)} dosya yeniden adlandirilacak:\n\n"
     onay += "\n".join(degisen[:25])
     if len(degisen) > 25:
         onay += f"\n  ... +{len(degisen) - 25} dosya daha"
-
     if not messagebox.askyesno("ONAY", onay):
         return
-
     try:
         durum_guncelle("Adlandiriliyor...")
         temp = []
@@ -567,14 +523,10 @@ def Calistir():
         durum_guncelle(f"Hata: {e}")
 
 
-# ═══════════════════════════════════════════════════
-#  ANA PENCERE
-# ═══════════════════════════════════════════════════
-
 pencere = Tk()
 pencere.geometry("1200x700")
 pencere.minsize(800, 500)
-pencere.title("JPG Renamer V1.4")
+pencere.title("JPG Renamer V1.5")
 pencere.configure(bg="#2b2b2b")
 
 panel = Label(pencere, bg="#1e1e1e",
@@ -610,7 +562,7 @@ else:
 if OCR_MEVCUT:
     bilgi.append("OCR: AKTIF")
 else:
-    bilgi.append("OCR: YOK")
+    bilgi.append("OCR: Tesseract gerekli (OCR butonuna basin)")
 bilgi.append("Kisayollar: Sol/Sag Ok | Ctrl+O | Ctrl+R | F5")
 
 durum_label = Label(pencere, text="  |  ".join(bilgi),
