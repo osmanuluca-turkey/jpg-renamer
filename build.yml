@@ -1,0 +1,43 @@
+name: Build EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: cmd
+      run: |
+        python -m pip install --upgrade pip
+        pip install pillow
+        pip install windnd
+        pip install pyinstaller
+
+    - name: Build EXE
+      shell: cmd
+      run: |
+        pyinstaller --onefile --windowed --noconfirm --clean --name JPG_Renamer --collect-submodules PIL --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL._tkinter_finder --hidden-import windnd --hidden-import tkinter renamer.py
+
+    - name: Show dist contents
+      shell: cmd
+      run: dir dist
+
+    - name: Upload EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: JPG_Renamer_Windows
+        path: dist/JPG_Renamer.exe
+        if-no-files-found: error
