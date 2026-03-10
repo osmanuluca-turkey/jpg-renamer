@@ -10,21 +10,29 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Tesseract OCR Engine
+      - name: Install Tesseract OCR
         shell: cmd
         run: choco install tesseract --no-progress -y
 
-      - name: Download Turkish language data
+      - name: Download Turkish language
         shell: cmd
         run: curl -L -o "C:\Program Files\Tesseract-OCR\tessdata\tur.traineddata" "https://github.com/tesseract-ocr/tessdata/raw/main/tur.traineddata"
 
       - name: Install Python packages
         shell: cmd
-        run: pip install pillow windnd pyinstaller pytesseract
+        run: pip install pillow windnd pytesseract pyinstaller
 
       - name: Build EXE
         shell: cmd
-        run: pyinstaller --onedir --windowed --noconfirm --name JPG_Renamer --add-data "C:\Program Files\Tesseract-OCR;tesseract" --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL._tkinter_finder --hidden-import windnd --hidden-import pytesseract renamer.py
+        run: pyinstaller --onedir --windowed --noconfirm --name JPG_Renamer --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL._tkinter_finder --hidden-import windnd --hidden-import pytesseract renamer.py
+
+      - name: Copy Tesseract into package
+        shell: cmd
+        run: |
+          mkdir "dist\JPG_Renamer\tesseract"
+          xcopy "C:\Program Files\Tesseract-OCR\*" "dist\JPG_Renamer\tesseract\" /E /Y /Q
+          dir "dist\JPG_Renamer\tesseract\"
+          dir "dist\JPG_Renamer\tesseract\tessdata\"
 
       - name: Upload
         uses: actions/upload-artifact@v4
