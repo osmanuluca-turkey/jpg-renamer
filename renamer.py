@@ -8,7 +8,7 @@ import threading
 import sys
 from PIL import ImageTk, Image
 
-# ── Tesseract yolunu bul (EXE icinde veya sistemde) ──
+# ── Tesseract yolunu bul ──
 def tesseract_yolunu_bul():
     adaylar = []
     if getattr(sys, 'frozen', False):
@@ -73,6 +73,61 @@ def dosya_adi_temizle(metin):
     return metin[:80]
 
 
+# ═══════════════════════════════════════════════════
+#  UZANTI KONTROL
+# ═══════════════════════════════════════════════════
+
+def orijinal_uzanti_al(index):
+    """Orijinal dosyanin uzantisini dondurur"""
+    if index < len(orijinal):
+        _, uz = os.path.splitext(orijinal[index])
+        return uz if uz else '.JPG'
+    return '.JPG'
+
+
+def uzanti_kontrol(ad, index):
+    """
+    Girilen ada uzanti kontrolu yapar:
+    - Uzanti yoksa orijinal uzantiyi ekler
+    - Gecersiz uzanti varsa uyari verir ve duzeltir
+    - Gecerli uzanti varsa dokunmaz
+    """
+    isim, uzanti = os.path.splitext(ad)
+
+    # Isim bos kalmasin
+    if not isim.strip():
+        isim = "isimsiz"
+
+    # Uzanti yoksa → orijinal uzantiyi ekle
+    if not uzanti:
+        orijinal_uz = orijinal_uzanti_al(index)
+        ad = isim + orijinal_uz
+        durum_guncelle(f"Uzanti eklendi: {orijinal_uz}")
+        return ad
+
+    # Uzanti var ama resim uzantisi degil → uyar ve orijinali ekle
+    if uzanti.lower() not in RESIM_UZANTILARI:
+        orijinal_uz = orijinal_uzanti_al(index)
+        ad = isim + uzanti.rstrip('.') + orijinal_uz
+        durum_guncelle(f"Gecersiz uzanti duzeltildi -> {ad}")
+        return ad
+
+    return ad
+
+
+def uzanti_degisti_mi(ad, index):
+    """Uzanti orijinalden farkli mi kontrol eder"""
+    _, yeni_uz = os.path.splitext(ad)
+    orijinal_uz = orijinal_uzanti_al(index)
+    if yeni_uz.lower() != orijinal_uz.lower():
+        return True, orijinal_uz
+    return False, orijinal_uz
+
+
+# ═══════════════════════════════════════════════════
+#  GORUNTU
+# ═══════════════════════════════════════════════════
+
 def resim_goster_bellekten(pil_img):
     panel.update_idletasks()
     pw = max(panel.winfo_width(), 400)
@@ -105,12 +160,17 @@ def durum_guncelle(mesaj):
     pencere.update_idletasks()
 
 
+# ═══════════════════════════════════════════════════
+#  BENZERSIZ YAPMA
+# ═══════════════════════════════════════════════════
+
 def benzersiz_yap(ad, index):
     global liste
+
+    # Oncelikle uzanti kontrolu
+    ad = uzanti_kontrol(ad, index)
+
     isim, uzanti = os.path.splitext(ad)
-    if not uzanti:
-        uzanti = '.JPG'
-        ad = isim + uzanti
     diger = [liste[i].lower() for i in range(len(liste)) if i != index]
     if ad.lower() not in diger:
         return ad
@@ -123,10 +183,10 @@ def benzersiz_yap(ad, index):
 def tum_listeyi_benzersiz_yap():
     global liste
     for i in range(len(liste)):
+        # Uzanti kontrolu
+        liste[i] = uzanti_kontrol(liste[i], i)
+
         isim, uzanti = os.path.splitext(liste[i])
-        if not uzanti:
-            uzanti = '.JPG'
-            liste[i] = isim + uzanti
         oncekiler = [liste[j].lower() for j in range(i)]
         if liste[i].lower() in oncekiler:
             s = 2
@@ -147,6 +207,10 @@ def klasoru_yeniden_yukle():
         sayi = max(0, say - 1)
     sayac_guncelle()
 
+
+# ═══════════════════════════════════════════════════
+#  KONTROL CUBUGU
+# ═══════════════════════════════════════════════════
 
 def kontrolleri_olustur():
     global Gr, kontroller_var, sayac_label
@@ -178,19 +242,50 @@ def sayac_guncelle():
 
 
 def ad_kontrol_et():
+    """Entry'deki adi kontrol et: uzanti + benzersizlik"""
     global liste, sayi, Gr
     if Gr is None or not liste:
         return
+
     ad = Gr.get().strip()
     if not ad:
+        # Bos birakilirsa orijinal adi geri koy
+        ad = orijinal[sayi]
+        Gr.delete(0, "end")
+        Gr.insert(0, ad)
+        durum_guncelle("Bos isim -> orijinal geri yuklendi")
+        liste[sayi] = ad
         return
+
+    # Uzanti kontrolu
+    ad = uzanti_kontrol(ad, sayi)
+
+    # Uzanti degismis mi kontrol et
+    degisti, orijinal_uz = uzanti_degisti_mi(ad, sayi)
+    if degisti:
+        _, yeni_uz = os.path.splitext(ad)
+        cevap = messagebox.askyesno("Uzanti Degisikligi",
+            f"Uzanti degisti: {orijinal_uz} -> {yeni_uz}\n\n"
+            f"Orijinal uzanti ({orijinal_uz}) kullanilsin mi?\n\n"
+            f"Evet = {orijinal_uz} kullan\n"
+            f"Hayir = {yeni_uz} kalsin")
+        if cevap:
+            isim, _ = os.path.splitext(ad)
+            ad = isim + orijinal_uz
+
+    # Benzersizlik kontrolu
     yeni = benzersiz_yap(ad, sayi)
     if yeni != ad:
-        Gr.delete(0, "end")
-        Gr.insert(0, yeni)
         durum_guncelle(f"Ayni isim -> {yeni}")
+
+    Gr.delete(0, "end")
+    Gr.insert(0, yeni)
     liste[sayi] = yeni
 
+
+# ═══════════════════════════════════════════════════
+#  DOSYA ACMA
+# ═══════════════════════════════════════════════════
 
 def dosya_ac(fil):
     global sayi, lstm, yol, im, liste, orijinal, say
@@ -255,6 +350,10 @@ def drop_fonk(dosyalar):
     pencere.after(50, lambda: dosya_ac(dosya))
 
 
+# ═══════════════════════════════════════════════════
+#  DONDURME
+# ═══════════════════════════════════════════════════
+
 def cevir():
     global im
     if im is None:
@@ -295,6 +394,10 @@ def cevir():
     threading.Thread(target=arka_plan_kaydet, daemon=True).start()
 
 
+# ═══════════════════════════════════════════════════
+#  OCR
+# ═══════════════════════════════════════════════════
+
 def ocr_oner():
     global im, Gr, sayi, liste
     if not OCR_MEVCUT or im is None:
@@ -315,10 +418,9 @@ def ocr_oner():
         if metin.strip():
             temiz = dosya_adi_temizle(metin)
             if temiz:
-                _, uzanti = os.path.splitext(Gr.get())
-                if not uzanti:
-                    uzanti = '.JPG'
-                yeni = benzersiz_yap(temiz + uzanti, sayi)
+                # Orijinal uzantiyi kullan
+                orijinal_uz = orijinal_uzanti_al(sayi)
+                yeni = benzersiz_yap(temiz + orijinal_uz, sayi)
                 if messagebox.askyesno("OCR Sonucu",
                         f"Okunan:\n{metin.strip()[:300]}\n\n"
                         f"Onerilen ad:\n  {yeni}\n\nKullanilsin mi?"):
@@ -333,21 +435,31 @@ def ocr_oner():
         messagebox.showerror("HATA", str(e))
 
 
+# ═══════════════════════════════════════════════════
+#  ILERI / GERI
+# ═══════════════════════════════════════════════════
+
 def ileri(event=None):
     global sayi
     if not lstm or Gr is None:
         return
     if event and pencere.focus_get() == Gr:
         return
+
     ad = Gr.get().strip()
     if ad:
+        ad = uzanti_kontrol(ad, sayi)
         yeni = benzersiz_yap(ad, sayi)
         liste[sayi] = yeni
         if yeni != ad:
             durum_guncelle(f"Ayni isim -> {yeni}")
+    else:
+        liste[sayi] = orijinal[sayi]
+
     if sayi >= say - 1:
         messagebox.showinfo("BILGI", "Son resim!")
         return
+
     sayi += 1
     resim_goster(lstm[sayi])
     Gr.delete(0, "end")
@@ -362,15 +474,21 @@ def geri(event=None):
         return
     if event and pencere.focus_get() == Gr:
         return
+
     ad = Gr.get().strip()
     if ad:
+        ad = uzanti_kontrol(ad, sayi)
         yeni = benzersiz_yap(ad, sayi)
         liste[sayi] = yeni
         if yeni != ad:
             durum_guncelle(f"Ayni isim -> {yeni}")
+    else:
+        liste[sayi] = orijinal[sayi]
+
     if sayi <= 0:
         messagebox.showinfo("BILGI", "Ilk resim!")
         return
+
     sayi -= 1
     resim_goster(lstm[sayi])
     Gr.delete(0, "end")
@@ -379,27 +497,48 @@ def geri(event=None):
     durum_guncelle(f"Klasor: {yol}  |  {liste[sayi]}")
 
 
+# ═══════════════════════════════════════════════════
+#  CALISTIR
+# ═══════════════════════════════════════════════════
+
 def Calistir():
     global lstm, liste, yol, Gr, sayi
+
     if Gr is not None and liste:
-        liste[sayi] = Gr.get().strip()
+        ad = Gr.get().strip()
+        if ad:
+            ad = uzanti_kontrol(ad, sayi)
+            liste[sayi] = ad
+        else:
+            liste[sayi] = orijinal[sayi]
+
     if not lstm:
         messagebox.showwarning("UYARI", "Once klasor acin!")
         return
+
+    # Tum listeye uzanti kontrolu uygula
+    for i in range(len(liste)):
+        liste[i] = uzanti_kontrol(liste[i], i)
+
     tum_listeyi_benzersiz_yap()
+
     degisen = []
     for i in range(len(orijinal)):
         if orijinal[i] != liste[i]:
             degisen.append(f"  {orijinal[i]}  ->  {liste[i]}")
+
     if not degisen:
         messagebox.showinfo("BILGI", "Degisiklik yok!")
         return
+
     onay = f"{len(degisen)} dosya yeniden adlandirilacak:\n\n"
     onay += "\n".join(degisen[:25])
     if len(degisen) > 25:
         onay += f"\n  ... +{len(degisen) - 25} dosya daha"
+
     if not messagebox.askyesno("ONAY", onay):
         return
+
     try:
         durum_guncelle("Adlandiriliyor...")
         temp = []
@@ -428,10 +567,14 @@ def Calistir():
         durum_guncelle(f"Hata: {e}")
 
 
+# ═══════════════════════════════════════════════════
+#  ANA PENCERE
+# ═══════════════════════════════════════════════════
+
 pencere = Tk()
 pencere.geometry("1200x700")
 pencere.minsize(800, 500)
-pencere.title("JPG Renamer V1.3")
+pencere.title("JPG Renamer V1.4")
 pencere.configure(bg="#2b2b2b")
 
 panel = Label(pencere, bg="#1e1e1e",
