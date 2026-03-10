@@ -8,12 +8,40 @@ import threading
 import sys
 from PIL import ImageTk, Image
 
+# ── Tesseract yolunu bul (EXE icinde veya sistemde) ──
+def tesseract_yolunu_bul():
+    adaylar = []
+    if getattr(sys, 'frozen', False):
+        base = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        adaylar.append(os.path.join(base, 'tesseract', 'tesseract.exe'))
+    adaylar.extend([
+        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+    ])
+    w = shutil.which('tesseract')
+    if w:
+        adaylar.append(w)
+    for y in adaylar:
+        if os.path.isfile(y):
+            return y
+    return None
+
+# ── OCR ──
 try:
     import pytesseract
-    OCR_MEVCUT = True
+    tess_yol = tesseract_yolunu_bul()
+    if tess_yol:
+        pytesseract.pytesseract.tesseract_cmd = tess_yol
+        tessdata = os.path.join(os.path.dirname(tess_yol), 'tessdata')
+        if os.path.isdir(tessdata):
+            os.environ['TESSDATA_PREFIX'] = os.path.dirname(tess_yol)
+        OCR_MEVCUT = True
+    else:
+        OCR_MEVCUT = False
 except ImportError:
     OCR_MEVCUT = False
 
+# ── Surukle-Birak ──
 try:
     import windnd
     DND_MEVCUT = True
@@ -270,7 +298,7 @@ def cevir():
 def ocr_oner():
     global im, Gr, sayi, liste
     if not OCR_MEVCUT or im is None:
-        messagebox.showerror("HATA", "OCR kullanilabilir degil")
+        messagebox.showerror("HATA", "OCR motoru bulunamadi!\n\nTesseract OCR yuklu degil.")
         return
     durum_guncelle("OCR okunuyor...")
     pencere.update()
@@ -438,6 +466,8 @@ else:
     bilgi.append("Surukle-birak: YOK")
 if OCR_MEVCUT:
     bilgi.append("OCR: AKTIF")
+else:
+    bilgi.append("OCR: YOK")
 bilgi.append("Kisayollar: Sol/Sag Ok | Ctrl+O | Ctrl+R | F5")
 
 durum_label = Label(pencere, text="  |  ".join(bilgi),
