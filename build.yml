@@ -5,17 +5,29 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install
-        run: pip install pillow windnd pyinstaller
+
+      - name: Install Tesseract OCR Engine
         shell: cmd
-      - name: Build
-        run: pyinstaller --onefile --windowed --noconfirm --name JPG_Renamer --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL._tkinter_finder --hidden-import windnd renamer.py
+        run: choco install tesseract --no-progress -y
+
+      - name: Download Turkish language data
         shell: cmd
+        run: curl -L -o "C:\Program Files\Tesseract-OCR\tessdata\tur.traineddata" "https://github.com/tesseract-ocr/tessdata/raw/main/tur.traineddata"
+
+      - name: Install Python packages
+        shell: cmd
+        run: pip install pillow windnd pyinstaller pytesseract
+
+      - name: Build EXE
+        shell: cmd
+        run: pyinstaller --onedir --windowed --noconfirm --name JPG_Renamer --add-data "C:\Program Files\Tesseract-OCR;tesseract" --hidden-import PIL --hidden-import PIL.Image --hidden-import PIL.ImageTk --hidden-import PIL._tkinter_finder --hidden-import windnd --hidden-import pytesseract renamer.py
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: JPG_Renamer_Windows
-          path: dist/JPG_Renamer.exe
+          path: dist/JPG_Renamer/
